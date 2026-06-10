@@ -184,6 +184,27 @@ html,body{height:100%;font-family:var(--f);background:var(--g50);color:var(--g90
 /* 2-col dashboard grid */
 .dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 
+/* REPORT MODAL & TABLE */
+.modal.modal-lg{max-width:850px}
+.report-table{width:100%;border-collapse:collapse;margin-top:10px}
+.report-table th{background:var(--g100);color:var(--g700);font-weight:600;padding:10px 12px;text-align:left;font-size:12px;border:1px solid var(--g200)}
+.report-table td{padding:10px 12px;font-size:13px;border:1px solid var(--g200);color:var(--g900)}
+.report-table tr:nth-child(even) td{background:var(--g50)}
+.report-table tr:hover td{background:var(--blue-s)}
+
+/* PRINT STYLING */
+@media print {
+  html, body { height: auto !important; overflow: visible !important; background: #fff !important; color: #000 !important; }
+  #app { display: none !important; }
+  .modal-bg { position: absolute; left: 0; top: 0; width: 100%; display: block !important; background: none !important; z-index: auto !important; padding: 0 !important; }
+  .modal-close, .modal-ft, .ti-printer { display: none !important; }
+  .modal { max-width: 100% !important; box-shadow: none !important; margin: 0 !important; padding: 0 !important; border: none !important; }
+  .modal-body { max-height: none !important; overflow: visible !important; padding: 0 !important; }
+  .report-table th { background: #f1f5f9 !important; border: 1px solid #cbd5e1 !important; color: #000 !important; }
+  .report-table td { border: 1px solid #cbd5e1 !important; color: #000 !important; }
+  .report-table tr:nth-child(even) td { background: #f8fafc !important; }
+}
+
 /* RESPONSIVE */
 @media(max-width:768px){
   .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
@@ -198,6 +219,11 @@ html,body{height:100%;font-family:var(--f);background:var(--g50);color:var(--g90
   .team-table th:nth-child(3),.team-table td:nth-child(3){display:none}
   .week-lbl{min-width:120px;font-size:12px}
   .leave-actions{flex-direction:column}
+
+  /* REPORT TABLE MOBILE STYLES */
+  .modal.modal-lg { max-width: 100%; margin: 8px; }
+  .modal-body { padding: 6px; }
+  .report-table th, .report-table td { padding: 3px 4px; font-size: 10px; }
 }
 @media(max-width:420px){
   .stat-grid{grid-template-columns:1fr}
@@ -550,7 +576,10 @@ function openModal({title,body,footer}) {
   document.getElementById('modal-ft').innerHTML=footer||'';
   document.getElementById('modal-bg').classList.add('open');
 }
-function closeModal() { document.getElementById('modal-bg').classList.remove('open'); }
+function closeModal() {
+  document.getElementById('modal-bg').classList.remove('open');
+  document.getElementById('modal').classList.remove('modal-lg');
+}
 document.getElementById('modal-close').onclick=closeModal;
 document.getElementById('modal-bg').onclick=e=>{ if(e.target===document.getElementById('modal-bg')) closeModal(); };
 
@@ -813,7 +842,7 @@ function monthDates(ym) {
   const last  = new Date(y, m, 0);
   const dates = [];
   for(let d=new Date(first); d<=last; d.setDate(d.getDate()+1))
-    dates.push(d.toISOString().split('T')[0]);
+    dates.push(localDateStr(d));
   return dates;
 }
 function addMonths(ym, n) {
@@ -833,6 +862,7 @@ function renderScheduleNav() {
       <span class="week-lbl" id="week-lbl">${isWeek?weekLabel(schedWeek):monthLabel(schedMonth)}</span>
       <button class="nav-arrow" onclick="chPeriod(1)" title="Suivant">&#8594;</button>
       <button class="btn btn-outline btn-sm" onclick="goNow()">Aujourd'hui</button>
+      <button class="btn btn-primary btn-sm" onclick="openReportModal()" style="margin-left:4px"><i class="ti ti-file-description"></i> Rapport</button>
     </div>`);
 }
 
@@ -988,6 +1018,120 @@ async function doAssign(empId, date, type) {
 async function doRemove(empId, date) {
   await DB.removeShift(empId, date);
   closeModal(); toast('Garde supprimée','ok'); loadSched();
+}
+
+async function openReportModal() {
+  const activeMonth = schedView === 'week' ? schedWeek.substring(0, 7) : schedMonth;
+  const employees = await DB.allEmployees();
+  const leaves = await DB.allLeaves();
+  const approved = leaves.filter(l => l.status === 'approuve');
+  const dates = monthDates(activeMonth);
+
+  // Fetch all shifts
+  const allShifts = await all(tx('shifts'));
+  const shifts = allShifts.filter(s => dates.includes(s.date));
+
+  // Build shift map
+  const shiftMap = {};
+  shifts.forEach(s => {
+    if (!shiftMap[s.employee_id]) shiftMap[s.employee_id] = {};
+    shiftMap[s.employee_id][s.date] = { type: s.type };
+  });
+
+  // Overlay approved leaves
+  approved.forEach(lr => {
+    const leaveDates = dateRange(lr.start_date, lr.end_date);
+    leaveDates.forEach(d => {
+      if (dates.includes(d)) {
+        if (!shiftMap[lr.employee_id]) shiftMap[lr.employee_id] = {};
+        shiftMap[lr.employee_id][d] = { type: 'conge' };
+      }
+    });
+  });
+
+  // Calculate daily workers
+  let maxWorkers = 0;
+  const dailyWorkers = {}; // date -> array of worker strings
+  const isMobile = window.innerWidth <= 768;
+
+  dates.forEach(d => {
+    const workers = [];
+    employees.forEach(emp => {
+      const s = shiftMap[emp.id]?.[d];
+      if (s) {
+        let motif = '';
+        if (s.type === 'matin') motif = 'Matin';
+        else if (s.type === 'apres_midi') motif = 'Après-midi';
+        else if (s.type === 'garde_nuit') motif = 'Garde';
+        else if (s.type === 'conge') motif = 'Congé';
+
+        if (motif) {
+          const empName = isMobile 
+            ? `${(emp.first_name?.[0] || '')}.${(emp.last_name?.[0] || '')}.` 
+            : `${emp.first_name} ${emp.last_name}`;
+          workers.push(`${empName} : ${motif}`);
+        }
+      }
+    });
+    dailyWorkers[d] = workers;
+    if (workers.length > maxWorkers) {
+      maxWorkers = workers.length;
+    }
+  });
+
+  // Build headers
+  let ths = `<th>Jour</th>`;
+  for (let i = 1; i <= maxWorkers; i++) {
+    ths += `<th>Personnel ${i}</th>`;
+  }
+  if (maxWorkers === 0) {
+    ths += `<th>Personnel</th>`;
+  }
+
+  // Build rows
+  const dayNamesFull = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+  const trs = dates.map(d => {
+    const dt = new Date(d + 'T00:00:00');
+    const dayName = dayNamesFull[dt.getDay()];
+    const dayLabel = isMobile ? `${dayName.substring(0, 3)} ${dt.getDate()}` : `${dayName} ${dt.getDate()}`;
+    const workers = dailyWorkers[d] || [];
+
+    let cells = `<td style="font-weight: 500; min-width: ${isMobile ? '60px' : '110px'};">${dayLabel}</td>`;
+    for (let i = 0; i < maxWorkers; i++) {
+      cells += `<td>${workers[i] || ''}</td>`;
+    }
+    if (maxWorkers === 0) {
+      cells += `<td>—</td>`;
+    }
+    return `<tr>${cells}</tr>`;
+  }).join('');
+
+  const [y, m] = activeMonth.split('-');
+  const monthNameLong = MONTHS_LONG[parseInt(m, 10) - 1];
+  const title = `planning mois de ${monthNameLong} ${y}`;
+
+  const tableHtml = `
+    <div style="overflow-x: auto;">
+      <table class="report-table">
+        <thead>
+          <tr>${ths}</tr>
+        </thead>
+        <tbody>
+          ${trs}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  document.getElementById('modal').classList.add('modal-lg');
+
+  openModal({
+    title: title.charAt(0).toUpperCase() + title.slice(1),
+    body: tableHtml,
+    footer: `
+      <button class="btn btn-primary" onclick="closeModal()">Fermer</button>
+    `
+  });
 }
 
 /* ═══════════════════════════════════════════════════════
