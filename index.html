@@ -1148,9 +1148,7 @@ async function openReportModal() {
         else if (s.type === 'conge') motif = 'Congé';
 
         if (motif) {
-          const empName = isMobile 
-            ? `${(emp.first_name?.[0] || '')}.${(emp.last_name?.[0] || '')}.` 
-            : `${emp.first_name} ${emp.last_name}`;
+          const empName = `${emp.first_name} ${emp.last_name}`;
           workers.push(`${empName} : ${motif}`);
         }
       }
