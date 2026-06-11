@@ -1,4 +1,4 @@
-const CACHE = 'hrm-v3';
+const CACHE = 'hrm-v4';
 const ASSETS = [
   './index.html',
   './manifest.json',
